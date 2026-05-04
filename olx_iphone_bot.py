@@ -162,11 +162,16 @@ def fetch_listings() -> list:
         try:
             # Title
             title_el = (
-                card.select_one("h6")
+                card.select_one("h4")
+                or card.select_one("h6")
                 or card.select_one("h3")
                 or card.select_one(".title-cell h3")
             )
-            title = title_el.get_text(strip=True) if title_el else "Unknown title"
+            if not title_el:
+                img = card.select_one("img[alt]")
+                title = img["alt"] if img else "Unknown title"
+            else:
+                title = title_el.get_text(strip=True)
 
             # Price
             price_el = (
