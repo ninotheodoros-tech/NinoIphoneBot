@@ -301,7 +301,11 @@ def is_mega_deal(profit: dict | None) -> bool:
 
 def source_label(listing: dict) -> str:
     src = listing.get("source", "OLX")
-    return "📘 Facebook Marketplace" if src == "Facebook" else "🟠 OLX.bg"
+    if src == "Facebook":
+        return "📘 Facebook Marketplace"
+    if src == "Bazar":
+        return "🔵 Bazar.bg"
+    return "🟠 OLX.bg"
 
 def format_mega_deal(listing: dict, profit: dict) -> str:
     return (
@@ -457,6 +461,103 @@ def fetch_facebook_listings() -> list:
     log.info(f"Facebook Marketplace: {len(listings)} listings in price range.")
     return listings
 
+# ── Bazar.bg Scraper ───────────────────────────────────────────────────────────
+# No login required — works immediately.
+
+BAZAR_BASE = "https://www.bazar.bg"
+BAZAR_URL  = (
+    f"https://www.bazar.bg/obiavi/telefoni-i-smartfoni/"
+    f"?q=iphone&price_from={MIN_PRICE}&price_to={MAX_PRICE}&sort=newest"
+)
+
+def fetch_bazar_listings() -> list:
+    try:
+        r = requests.get(BAZAR_URL, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+    except Exception as e:
+        log.error(f"Failed to fetch Bazar.bg: {e}")
+        return []
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    listings = []
+
+    # Bazar.bg listing cards
+    cards = (
+        soup.select("article.aditem")
+        or soup.select("li.aditem")
+        or soup.select(".listview-item")
+        or soup.select(".advert-list__item")
+        or soup.select("div[class*='aditem']")
+    )
+
+    if not cards:
+        # Fallback: any article or li with a price inside
+        cards = [c for c in soup.select("article,li") if c.select_one("[class*='price']")]
+
+    if not cards:
+        log.warning("Bazar.bg: No listing cards found — site structure may have changed.")
+        return []
+
+    for card in cards:
+        try:
+            # Title + link
+            link_el = (
+                card.select_one("a.title")
+                or card.select_one("h3 a")
+                or card.select_one("h2 a")
+                or card.select_one("a[href*='/obiavi/']")
+            )
+            if not link_el:
+                continue
+            title = link_el.get_text(strip=True)
+            href  = link_el.get("href", "")
+            link  = href if href.startswith("http") else BAZAR_BASE + href
+
+            # Price
+            price_el = (
+                card.select_one(".price")
+                or card.select_one("[class*='price']")
+                or card.select_one("strong")
+            )
+            price_text = price_el.get_text(strip=True) if price_el else "Price unknown"
+
+            # Filter by price
+            nums = re.findall(r"\d+", price_text.replace(" ", ""))
+            if nums:
+                price_int = int(nums[0])
+                if not (MIN_PRICE <= price_int <= MAX_PRICE):
+                    continue
+                price_display = f"{price_int} лв"
+            else:
+                price_display = price_text
+
+            # Location
+            loc_el = (
+                card.select_one(".location")
+                or card.select_one("[class*='location']")
+                or card.select_one("[class*='city']")
+            )
+            location = loc_el.get_text(strip=True) if loc_el else "България"
+
+            # Unique ID from URL slug
+            slug = href.split("?")[0].rstrip("/")
+            listing_id = "bz_" + (slug.split("/")[-1] or slug.split("/")[-2] or title[:20])
+
+            listings.append({
+                "id":       listing_id,
+                "title":    title,
+                "price":    price_display,
+                "link":     link,
+                "location": location,
+                "source":   "Bazar",
+            })
+        except Exception as e:
+            log.debug(f"Bazar.bg: Skipped card — {e}")
+            continue
+
+    log.info(f"Bazar.bg: {len(listings)} listings in price range.")
+    return listings
+
 # ── OLX Scraper ─────────────────────────────────────────────────────────────────
 
 def fetch_listings() -> list:
@@ -540,9 +641,10 @@ def fetch_listings() -> list:
 
 def check_and_notify():
     seen = load_seen()
-    olx_listings = fetch_listings()
-    fb_listings  = fetch_facebook_listings()
-    listings = olx_listings + fb_listings
+    olx_listings   = fetch_listings()
+    fb_listings    = fetch_facebook_listings()
+    bazar_listings = fetch_bazar_listings()
+    listings = olx_listings + bazar_listings + fb_listings
     new_count = 0
     skipped = 0
 
