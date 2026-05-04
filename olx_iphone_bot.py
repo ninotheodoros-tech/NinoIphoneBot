@@ -465,9 +465,12 @@ def fetch_facebook_listings() -> list:
 # No login required — works immediately.
 
 BAZAR_BASE = "https://bazar.bg"
+# Bazar.bg prices are in EUR (1 EUR = 1.956 BGN fixed rate)
+_BAZAR_EUR_MIN = int(MIN_PRICE / 1.956)   # 108 лв ≈ 55 €
+_BAZAR_EUR_MAX = int(MAX_PRICE / 1.956)   # 252 лв ≈ 129 €
 BAZAR_URL  = (
     f"https://bazar.bg/obiavi"
-    f"?q=iphone&price_from={MIN_PRICE}&price_to={MAX_PRICE}&sort=newest"
+    f"?q=iphone&price_from={_BAZAR_EUR_MIN}&price_to={_BAZAR_EUR_MAX}&sort=newest"
 )
 
 def fetch_bazar_listings() -> list:
