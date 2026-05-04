@@ -2,11 +2,18 @@ name: OLX iPhone Bot
 
 on:
   schedule:
-    - cron: '* * * * *'
+    - cron: '* * * * *'       # Check OLX every minute (GitHub caps at ~5 min)
+    - cron: '0 7 * * *'       # Morning summary at 9:00 Sofia time (7:00 UTC)
   workflow_dispatch:
+    inputs:
+      morning_summary:
+        description: 'Send morning summary now'
+        required: false
+        default: 'false'
 
 jobs:
   check-olx:
+    if: github.event_name != 'schedule' || github.event.schedule == '* * * * *' || github.event.inputs.morning_summary != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -26,10 +33,32 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python olx_iphone_bot.py
 
-      - name: Save seen listings back to repo
+      - name: Save seen listings and best deals back to repo
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add seen_listings.json
-          git diff --staged --quiet || git commit -m "Update seen listings"
+          git add seen_listings.json best_deals.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "Update listings data"
           git push
+
+  morning-summary:
+    if: github.event.schedule == '0 7 * * *' || github.event.inputs.morning_summary == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Send morning summary
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_MORNING_SUMMARY: 'true'
+        run: python olx_iphone_bot.py
