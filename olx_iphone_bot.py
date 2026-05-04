@@ -464,9 +464,9 @@ def fetch_facebook_listings() -> list:
 # ── Bazar.bg Scraper ───────────────────────────────────────────────────────────
 # No login required — works immediately.
 
-BAZAR_BASE = "https://www.bazar.bg"
+BAZAR_BASE = "https://bazar.bg"
 BAZAR_URL  = (
-    f"https://www.bazar.bg/obiavi/telefoni-i-smartfoni/"
+    f"https://bazar.bg/obiavi"
     f"?q=iphone&price_from={MIN_PRICE}&price_to={MAX_PRICE}&sort=newest"
 )
 
@@ -481,67 +481,61 @@ def fetch_bazar_listings() -> list:
     soup = BeautifulSoup(r.text, "html.parser")
     listings = []
 
-    # Bazar.bg listing cards
-    cards = (
-        soup.select("article.aditem")
-        or soup.select("li.aditem")
-        or soup.select(".listview-item")
-        or soup.select(".advert-list__item")
-        or soup.select("div[class*='aditem']")
-    )
-
-    if not cards:
-        # Fallback: any article or li with a price inside
-        cards = [c for c in soup.select("article,li") if c.select_one("[class*='price']")]
-
+    # Confirmed selector from live page inspection
+    cards = soup.select("div.listItemContainer")
     if not cards:
         log.warning("Bazar.bg: No listing cards found — site structure may have changed.")
         return []
 
     for card in cards:
         try:
-            # Title + link
-            link_el = (
-                card.select_one("a.title")
-                or card.select_one("h3 a")
-                or card.select_one("h2 a")
-                or card.select_one("a[href*='/obiavi/']")
-            )
+            # The entire card is wrapped in <a class="listItemLink">
+            link_el = card.select_one("a.listItemLink")
             if not link_el:
                 continue
-            title = link_el.get_text(strip=True)
-            href  = link_el.get("href", "")
-            link  = href if href.startswith("http") else BAZAR_BASE + href
 
-            # Price
-            price_el = (
-                card.select_one(".price")
-                or card.select_one("[class*='price']")
-                or card.select_one("strong")
-            )
-            price_text = price_el.get_text(strip=True) if price_el else "Price unknown"
+            # Title from the <span class="title"> inside the link
+            title_el = link_el.select_one("span.title")
+            title = title_el.get_text(strip=True) if title_el else link_el.get("title", "")
+            if not title:
+                continue
 
-            # Filter by price
-            nums = re.findall(r"\d+", price_text.replace(" ", ""))
-            if nums:
-                price_int = int(nums[0])
-                if not (MIN_PRICE <= price_int <= MAX_PRICE):
-                    continue
-                price_display = f"{price_int} лв"
-            else:
-                price_display = price_text
+            href = link_el.get("href", "")
+            link = href if href.startswith("http") else BAZAR_BASE + href
+
+            # Listing ID from data-id attribute (most reliable)
+            listing_id = "bz_" + link_el.get("data-id", href.split("/")[-1])
 
             # Location
-            loc_el = (
-                card.select_one(".location")
-                or card.select_one("[class*='location']")
-                or card.select_one("[class*='city']")
-            )
+            loc_el = link_el.select_one("span.location")
             location = loc_el.get_text(strip=True) if loc_el else "България"
 
-            # Unique ID from URL slug
-            slug = href.split("?")[0].rstrip("/")
-            listing_id = "bz_" + (slug.split("/")[-1] or slug.split("/")[-2] or title[:20])
+            # Price — page shows both EUR and лв; grab the лв one (second span.price)
+            price_spans = link_el.select("span.price")
+            price_lv = None
+            for span in price_spans:
+                currency = span.select_one("span.currency")
+                if currency and "лв" in currency.get_text():
+                    nums = re.findall(r"[\d,\.]+", span.get_text().replace(",", ".").replace(" ", ""))
+                    if nums:
+                        try:
+                            price_lv = float(nums[0])
+                        except ValueError:
+                            pass
+                    break
+
+            if price_lv is None:
+                # Fallback: try first price span
+                if price_spans:
+                    nums = re.findall(r"\d+", price_spans[0].get_text().replace(" ", ""))
+                    price_lv = float(nums[0]) if nums else None
+
+            if price_lv is None:
+                continue
+            if not (MIN_PRICE <= price_lv <= MAX_PRICE):
+                continue
+
+            price_display = f"{int(price_lv)} лв"
 
             listings.append({
                 "id":       listing_id,
