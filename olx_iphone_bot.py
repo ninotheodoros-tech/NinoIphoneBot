@@ -32,6 +32,79 @@ MAX_PRICE = 252
 SEARCH_QUERY = "iphone"
 SEEN_FILE    = "seen_listings.json"
 
+# ── Profit Estimator ───────────────────────────────────────────────────────────
+BATTERY_COST = 40  # лв — average battery replacement cost in Bulgaria
+
+# Typical resale price (лв) for a working iPhone in good condition on OLX.bg
+# Format: model_keyword -> (min_resale, max_resale)
+RESALE_PRICES = {
+    "iphone 16 pro max": (1400, 1700),
+    "iphone 16 pro":     (1200, 1500),
+    "iphone 16 plus":    (1000, 1200),
+    "iphone 16":         (900,  1100),
+    "iphone 15 pro max": (1200, 1500),
+    "iphone 15 pro":     (1000, 1300),
+    "iphone 15 plus":    (850,  1050),
+    "iphone 15":         (750,  950),
+    "iphone 14 pro max": (950,  1150),
+    "iphone 14 pro":     (800,  1000),
+    "iphone 14 plus":    (700,  850),
+    "iphone 14":         (600,  780),
+    "iphone 13 pro max": (750,  900),
+    "iphone 13 pro":     (650,  800),
+    "iphone 13 mini":    (400,  520),
+    "iphone 13":         (480,  620),
+    "iphone 12 pro max": (550,  700),
+    "iphone 12 pro":     (480,  620),
+    "iphone 12 mini":    (320,  430),
+    "iphone 12":         (380,  500),
+    "iphone 11 pro max": (420,  550),
+    "iphone 11 pro":     (360,  480),
+    "iphone 11":         (280,  390),
+    "iphone xr":         (210,  290),
+    "iphone xs max":     (230,  300),
+    "iphone xs":         (190,  260),
+    "iphone x":          (170,  240),
+    "iphone se 3":       (300,  400),
+    "iphone se 2":       (200,  280),
+    "iphone se":         (160,  230),
+    "iphone 8 plus":     (160,  220),
+    "iphone 8":          (140,  190),
+    "iphone 7 plus":     (120,  170),
+    "iphone 7":          (100,  150),
+}
+
+def get_model(title: str):
+    t = title.lower()
+    for model in RESALE_PRICES:
+        if model in t:
+            return model
+    return None
+
+def estimate_profit(title: str, listing_price_text: str):
+    model = get_model(title)
+    if not model:
+        return None
+    # Parse the listing price (take the BGN value before лв or /)
+    import re
+    nums = re.findall(r"[\d]+(?:[.,]\d+)?", listing_price_text.replace(",", "."))
+    if not nums:
+        return None
+    buy_price = float(nums[0])
+    min_sell, max_sell = RESALE_PRICES[model]
+    min_profit = round(min_sell - buy_price - BATTERY_COST)
+    max_profit = round(max_sell - buy_price - BATTERY_COST)
+    return {
+        "model": model.title(),
+        "buy": buy_price,
+        "battery_cost": BATTERY_COST,
+        "min_sell": min_sell,
+        "max_sell": max_sell,
+        "min_profit": min_profit,
+        "max_profit": max_profit,
+    }
+# ───────────────────────────────────────────────────────────────────────────────
+
 # ── Filtering ───────────────────────────────────────────────────────────────────
 # Title must contain one of these to be considered a real iPhone listing
 IPHONE_KEYWORDS = ["iphone", "айфон"]
@@ -122,14 +195,30 @@ def is_battery_flip(title: str) -> bool:
 def format_alert(listing: dict) -> str:
     battery = is_battery_flip(listing["title"])
     header = "🔋 <b>BATTERY FLIP OPPORTUNITY!</b>" if battery else "📱 <b>New iPhone on OLX.bg!</b>"
-    tip = "\n💡 <i>Mentions battery/repair — could be a great flip!</i>" if battery else ""
+
+    profit = estimate_profit(listing["title"], listing["price"])
+    if profit:
+        if profit["max_profit"] > 0:
+            profit_color = "🟢" if profit["min_profit"] > 50 else "🟡"
+            profit_section = (
+                f"\n\n📊 <b>Profit Estimate</b>\n"
+                f"  Buy:      <b>{profit['buy']:.0f} лв</b>\n"
+                f"  Battery:  <b>~{profit['battery_cost']} лв</b>\n"
+                f"  Resell:   <b>{profit['min_sell']}–{profit['max_sell']} лв</b>\n"
+                f"  {profit_color} Profit:  <b>{profit['min_profit']}–{profit['max_profit']} лв</b>"
+            )
+        else:
+            profit_section = f"\n\n🔴 <b>Likely not worth it</b> — resale price too close to buy price."
+    else:
+        profit_section = ""
+
     return (
         f"{header}\n\n"
         f"<b>{listing['title']}</b>\n"
         f"💰 <b>{listing['price']}</b>\n"
-        f"📍 {listing['location']}\n"
-        f"🔗 <a href='{listing['link']}'>Open listing</a>"
-        f"{tip}\n\n"
+        f"📍 {listing['location']}"
+        f"{profit_section}\n\n"
+        f"🔗 <a href='{listing['link']}'>Open listing</a>\n"
         f"🕐 Found at {datetime.now().strftime('%H:%M:%S')}"
     )
 
