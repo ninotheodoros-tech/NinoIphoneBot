@@ -299,11 +299,16 @@ MEGA_DEAL_MIN_PROFIT = 150  # лв
 def is_mega_deal(profit: dict | None) -> bool:
     return profit is not None and profit["min_profit"] >= MEGA_DEAL_MIN_PROFIT
 
+def source_label(listing: dict) -> str:
+    src = listing.get("source", "OLX")
+    return "📘 Facebook Marketplace" if src == "Facebook" else "🟠 OLX.bg"
+
 def format_mega_deal(listing: dict, profit: dict) -> str:
     return (
         f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n"
         f"‼️ <b>MEGA DEAL — BUY NOW!!!</b> ‼️\n"
         f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n\n"
+        f"{source_label(listing)}\n"
         f"🔥 <b>{listing['title']}</b>\n"
         f"💰 <b>{listing['price']}</b>\n"
         f"📍 {listing['location']}\n\n"
@@ -318,7 +323,8 @@ def format_mega_deal(listing: dict, profit: dict) -> str:
 
 def format_alert(listing: dict, profit: dict | None) -> str:
     battery = is_battery_flip(listing["title"])
-    header = "🔋 <b>BATTERY FLIP OPPORTUNITY!</b>" if battery else "📱 <b>New iPhone on OLX.bg!</b>"
+    src = source_label(listing)
+    header = f"🔋 <b>BATTERY FLIP OPPORTUNITY!</b>\n{src}" if battery else f"📱 <b>New iPhone!</b>\n{src}"
 
     if profit:
         warnings_text = "\n".join(profit["warnings"])
@@ -352,7 +358,106 @@ def format_alert(listing: dict, profit: dict | None) -> str:
     )
 
 
-# ── Scraper ────────────────────────────────────────────────────────────────────
+# ── Facebook Marketplace Scraper ───────────────────────────────────────────────
+# Requires FB_C_USER and FB_XS secrets (from a dedicated bot Facebook account).
+# Bot works fine without them — Facebook scraping is skipped until cookies are set.
+
+FB_C_USER = os.environ.get("FB_C_USER", "")
+FB_XS     = os.environ.get("FB_XS", "")
+
+# Facebook Marketplace search URL for Bulgaria (iPhones in price range)
+FB_SEARCH_URL = (
+    f"https://www.facebook.com/marketplace/search"
+    f"/?query=iphone&minPrice={MIN_PRICE}&maxPrice={MAX_PRICE}"
+    f"&daysSinceListed=1&sortBy=creation_time_descend"
+)
+
+FB_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "bg-BG,bg;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Mode": "navigate",
+}
+
+def fetch_facebook_listings() -> list:
+    if not FB_C_USER or not FB_XS:
+        log.debug("Facebook cookies not set — skipping Facebook Marketplace.")
+        return []
+
+    cookies = {"c_user": FB_C_USER, "xs": FB_XS}
+    try:
+        r = requests.get(FB_SEARCH_URL, headers=FB_HEADERS, cookies=cookies, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.error(f"Failed to fetch Facebook Marketplace: {e}")
+        return []
+
+    # Facebook embeds all listing data as JSON inside <script> tags.
+    # We look for listing objects containing marketplace_listing_title.
+    raw = r.text
+    listings = []
+    seen_ids = set()
+
+    # Extract all JSON blobs from <script type="application/json"> tags
+    soup = BeautifulSoup(raw, "html.parser")
+    scripts = soup.find_all("script", {"type": "application/json"})
+
+    # Also search for inline JSON patterns in regular script tags
+    all_json_sources = [s.string for s in scripts if s.string]
+    for tag in soup.find_all("script"):
+        if tag.string and "marketplace_listing_title" in (tag.string or ""):
+            all_json_sources.append(tag.string)
+
+    # Use regex to pull out individual listing objects
+    listing_pattern = re.compile(
+        r'"marketplace_listing_title"\s*:\s*"([^"]+)"'
+        r'.*?"amount"\s*:\s*"(\d+)"'
+        r'.*?"id"\s*:\s*"(\d{10,})"',
+        re.DOTALL
+    )
+    location_pattern = re.compile(r'"city"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"')
+
+    for source in all_json_sources:
+        if not source:
+            continue
+        for m in listing_pattern.finditer(source):
+            title    = m.group(1).encode().decode("unicode_escape") if "\\" in m.group(1) else m.group(1)
+            price_lv = m.group(2)
+            lid      = m.group(3)
+
+            if lid in seen_ids:
+                continue
+            seen_ids.add(lid)
+
+            # Try to extract city
+            loc_m = location_pattern.search(source[max(0, m.start()-2000): m.end()+2000])
+            location = loc_m.group(1) if loc_m else "Bulgaria"
+
+            try:
+                price_int = int(price_lv)
+            except ValueError:
+                continue
+            if not (MIN_PRICE <= price_int <= MAX_PRICE):
+                continue
+
+            listings.append({
+                "id":       f"fb_{lid}",
+                "title":    title,
+                "price":    f"{price_lv} лв",
+                "link":     f"https://www.facebook.com/marketplace/item/{lid}/",
+                "location": location,
+                "source":   "Facebook",
+            })
+
+    log.info(f"Facebook Marketplace: {len(listings)} listings in price range.")
+    return listings
+
+# ── OLX Scraper ─────────────────────────────────────────────────────────────────
 
 def fetch_listings() -> list:
     try:
@@ -435,7 +540,9 @@ def fetch_listings() -> list:
 
 def check_and_notify():
     seen = load_seen()
-    listings = fetch_listings()
+    olx_listings = fetch_listings()
+    fb_listings  = fetch_facebook_listings()
+    listings = olx_listings + fb_listings
     new_count = 0
     skipped = 0
 
