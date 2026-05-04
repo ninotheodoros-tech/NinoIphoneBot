@@ -29,9 +29,28 @@ CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
 MIN_PRICE = 108
 MAX_PRICE = 252
 
-SEARCH_QUERY    = "iphone"
-CHECK_EVERY_SEC = 300        # How often to check (seconds). 300 = every 5 min.
-SEEN_FILE       = "seen_listings.json"
+SEARCH_QUERY = "iphone"
+SEEN_FILE    = "seen_listings.json"
+
+# ── Filtering ───────────────────────────────────────────────────────────────────
+# Title must contain one of these to be considered a real iPhone listing
+IPHONE_KEYWORDS = ["iphone", "айфон"]
+
+# Listings containing any of these words are skipped (accessories, not phones)
+EXCLUDE_KEYWORDS = [
+    "airpods", "air pods", "кейс", "case", "калъф", "кабел", "cable",
+    "зарядно", "charger", "слушалки", "стъкло", "протектор", "screen protector",
+    "батерия само", "watch", "ipad", "macbook", "части", "spare parts",
+    "дисплей само", "корпус само"
+]
+
+# If title contains any of these — flag it as a battery-flip opportunity
+BATTERY_KEYWORDS = [
+    "батерия", "battery", "батер", "зарежда", "не зарежда", "не държи",
+    "бърза разредка", "swap", "смяна", "троши", "счупен", "повреден",
+    "damage", "broken", "за ремонт", "ремонт", "за части", "spares",
+    "не работи", "проблем"
+]
 # ───────────────────────────────────────────────────────────────────────────────
 
 BASE_URL   = "https://www.olx.bg"
@@ -88,13 +107,29 @@ def send_telegram(text: str):
         log.error(f"Telegram send failed: {e}")
 
 
+def is_iphone(title: str) -> bool:
+    t = title.lower()
+    if not any(k in t for k in IPHONE_KEYWORDS):
+        return False
+    if any(k in t for k in EXCLUDE_KEYWORDS):
+        return False
+    return True
+
+def is_battery_flip(title: str) -> bool:
+    t = title.lower()
+    return any(k in t for k in BATTERY_KEYWORDS)
+
 def format_alert(listing: dict) -> str:
+    battery = is_battery_flip(listing["title"])
+    header = "🔋 <b>BATTERY FLIP OPPORTUNITY!</b>" if battery else "📱 <b>New iPhone on OLX.bg!</b>"
+    tip = "\n💡 <i>Mentions battery/repair — could be a great flip!</i>" if battery else ""
     return (
-        f"📱 <b>New iPhone Deal on OLX.bg!</b>\n\n"
+        f"{header}\n\n"
         f"<b>{listing['title']}</b>\n"
         f"💰 <b>{listing['price']}</b>\n"
         f"📍 {listing['location']}\n"
-        f"🔗 <a href='{listing['link']}'>Open listing</a>\n\n"
+        f"🔗 <a href='{listing['link']}'>Open listing</a>"
+        f"{tip}\n\n"
         f"🕐 Found at {datetime.now().strftime('%H:%M:%S')}"
     )
 
@@ -179,18 +214,24 @@ def check_and_notify():
     seen = load_seen()
     listings = fetch_listings()
     new_count = 0
+    skipped = 0
 
     for listing in listings:
+        if not is_iphone(listing["title"]):
+            skipped += 1
+            log.debug(f"  Skipped (not iPhone): {listing['title']}")
+            continue
         if listing["id"] not in seen:
-            log.info(f"  🆕 {listing['title']} — {listing['price']}")
+            flip = "🔋 BATTERY FLIP" if is_battery_flip(listing["title"]) else "📱 iPhone"
+            log.info(f"  {flip}: {listing['title']} — {listing['price']}")
             send_telegram(format_alert(listing))
             seen.add(listing["id"])
             new_count += 1
-            time.sleep(1.5)  # small delay so Telegram doesn't rate-limit us
+            time.sleep(1.5)
 
     save_seen(seen)
     log.info(
-        f"Check complete — {len(listings)} total listings, {new_count} new alerts sent."
+        f"Done — {len(listings)} total, {skipped} filtered out, {new_count} new alerts sent."
     )
 
 
