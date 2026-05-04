@@ -519,7 +519,9 @@ def fetch_bazar_listings() -> list:
             for span in price_spans:
                 currency = span.select_one("span.currency")
                 if currency and "лв" in currency.get_text():
-                    nums = re.findall(r"[\d,\.]+", span.get_text().replace(",", ".").replace(" ", ""))
+                    # Comma is decimal separator: "195,58 лв" → 195.58
+                    raw = span.get_text().replace(",", ".").strip()
+                    nums = re.findall(r"\d+(?:\.\d+)?", raw)
                     if nums:
                         try:
                             price_lv = float(nums[0])
@@ -528,10 +530,15 @@ def fetch_bazar_listings() -> list:
                     break
 
             if price_lv is None:
-                # Fallback: try first price span
+                # Fallback: parse EUR price and convert (1 EUR = 1.956 BGN)
                 if price_spans:
-                    nums = re.findall(r"\d+", price_spans[0].get_text().replace(" ", ""))
-                    price_lv = float(nums[0]) if nums else None
+                    raw = price_spans[0].get_text().replace(",", ".").strip()
+                    nums = re.findall(r"\d+(?:\.\d+)?", raw)
+                    if nums:
+                        try:
+                            price_lv = round(float(nums[0]) * 1.956)
+                        except ValueError:
+                            pass
 
             if price_lv is None:
                 continue
