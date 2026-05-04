@@ -293,6 +293,29 @@ def is_battery_flip(title: str) -> bool:
     t = title.lower()
     return any(k in t for k in BATTERY_KEYWORDS)
 
+# Profit threshold for a MEGA DEAL alert (phone buzzes twice, dramatic format)
+MEGA_DEAL_MIN_PROFIT = 150  # лв
+
+def is_mega_deal(profit: dict | None) -> bool:
+    return profit is not None and profit["min_profit"] >= MEGA_DEAL_MIN_PROFIT
+
+def format_mega_deal(listing: dict, profit: dict) -> str:
+    return (
+        f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n"
+        f"‼️ <b>MEGA DEAL — BUY NOW!!!</b> ‼️\n"
+        f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n\n"
+        f"🔥 <b>{listing['title']}</b>\n"
+        f"💰 <b>{listing['price']}</b>\n"
+        f"📍 {listing['location']}\n\n"
+        f"💵 Buy:    <b>{profit['buy']:.0f} лв</b>\n"
+        f"🔋 Battery: <b>~{profit['battery_cost']} лв</b>\n"
+        f"📈 Resell: <b>{profit['min_sell']}–{profit['max_sell']} лв</b>\n\n"
+        f"🟢🟢 <b>PROFIT: {profit['min_profit']}–{profit['max_profit']} лв</b> 🟢🟢\n\n"
+        f"⚡️ <b>This is a rare one — open it immediately!</b>\n\n"
+        f"🔗 <a href='{listing['link']}'>OPEN LISTING NOW</a>\n"
+        f"🕐 {datetime.now().strftime('%H:%M:%S')}"
+    )
+
 def format_alert(listing: dict, profit: dict | None) -> str:
     battery = is_battery_flip(listing["title"])
     header = "🔋 <b>BATTERY FLIP OPPORTUNITY!</b>" if battery else "📱 <b>New iPhone on OLX.bg!</b>"
@@ -301,7 +324,6 @@ def format_alert(listing: dict, profit: dict | None) -> str:
         warnings_text = "\n".join(profit["warnings"])
         warn_section = f"\n{warnings_text}" if warnings_text else ""
 
-        # iCloud locked — big warning, no profit shown
         if any("iCLOUD LOCKED" in w for w in profit["warnings"]):
             profit_section = f"\n{warn_section}\n⛔ <b>SKIP THIS — iCloud locked phones cannot be activated!</b>"
         elif profit["max_profit"] <= 0:
@@ -427,7 +449,14 @@ def check_and_notify():
             flip = "🔋 BATTERY FLIP" if is_battery_flip(listing["title"]) else "📱 iPhone"
             profit_str = f" | profit {profit['min_profit']}–{profit['max_profit']} лв" if profit else ""
             log.info(f"  {flip}: {listing['title']} — {listing['price']}{profit_str}")
-            send_telegram(format_alert(listing, profit))
+            if is_mega_deal(profit):
+                log.info(f"  🚨 MEGA DEAL detected!")
+                # Send twice so phone buzzes twice and it stands out
+                send_telegram(format_mega_deal(listing, profit))
+                time.sleep(2)
+                send_telegram(format_mega_deal(listing, profit))
+            else:
+                send_telegram(format_alert(listing, profit))
             if profit and profit["max_profit"] > 0:
                 save_best_deal(listing, profit)
             seen.add(listing["id"])
