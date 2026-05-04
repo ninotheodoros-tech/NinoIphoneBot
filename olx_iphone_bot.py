@@ -196,16 +196,24 @@ def check_and_notify():
 
 def main():
     log.info("=" * 55)
-    log.info("  OLX.bg iPhone Flipper Bot — Checking now")
+    log.info("  OLX.bg iPhone Flipper Bot — Starting up")
     log.info(f"  Price range : {MIN_PRICE}–{MAX_PRICE} лв (~$60–$140)")
     log.info(f"  Search URL  : {SEARCH_URL}")
     log.info("=" * 55)
 
-    log.info(f"Checking OLX.bg at {datetime.now().strftime('%H:%M:%S')} ...")
-    try:
-        check_and_notify()
-    except Exception as e:
-        log.error(f"Unexpected error during check: {e}")
+    # When run by GitHub Actions, CHECK_EVERY_SEC is 0 — run once and exit
+    # When run locally on Replit, loop every 60 seconds
+    run_once = os.environ.get("GITHUB_ACTIONS") == "true"
+
+    while True:
+        log.info(f"Checking OLX.bg at {datetime.now().strftime('%H:%M:%S')} ...")
+        try:
+            check_and_notify()
+        except Exception as e:
+            log.error(f"Unexpected error during check: {e}")
+        if run_once:
+            break
+        time.sleep(60)
 
 
 if __name__ == "__main__":
