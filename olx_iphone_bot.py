@@ -32,6 +32,9 @@ MAX_PRICE = 252
 SEARCH_QUERY = "iphone"
 SEEN_FILE    = "seen_listings.json"
 
+# Minimum price drop (лв) to trigger an alert — avoids noise from rounding
+PRICE_DROP_MIN = 5
+
 # ── Profit Estimator ───────────────────────────────────────────────────────────
 import re
 
@@ -283,16 +286,40 @@ HEADERS = {
 
 # ── Persistence ────────────────────────────────────────────────────────────────
 
-def load_seen() -> set:
+def parse_price_bgn(price_text: str) -> float | None:
+    """Parse a price string to a BGN float.
+    Handles '180 лв', '195,58 лв', '92 €', raw integers, etc.
+    Returns None if nothing parseable found.
+    """
+    if not price_text:
+        return None
+    clean = price_text.replace(",", ".").lower()
+    nums = re.findall(r"\d+(?:\.\d+)?", clean)
+    if not nums:
+        return None
+    val = float(nums[0])
+    if "€" in price_text or "eur" in clean:
+        val = round(val * BGN_TO_EUR, 2)
+    return val
+
+
+def load_seen() -> dict:
+    """Returns {listing_id: last_seen_price_bgn}.
+    Automatically migrates old list-of-IDs format to the new dict format.
+    """
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    return set()
+            data = json.load(f)
+        if isinstance(data, list):
+            # Old format: list of ID strings → migrate, price unknown
+            return {id_: None for id_ in data}
+        return data
+    return {}
 
 
-def save_seen(seen: set):
+def save_seen(seen: dict):
     with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f, indent=2)
+        json.dump(seen, f, indent=2)
 
 
 # ── Telegram ───────────────────────────────────────────────────────────────────
@@ -378,6 +405,40 @@ def format_mega_deal(listing: dict, profit: dict) -> str:
         f"🔗 <a href='{listing['link']}'>OPEN LISTING NOW</a>\n"
         f"🕐 {datetime.now().strftime('%H:%M:%S')}"
     )
+
+def format_price_drop(listing: dict, old_price: float, new_price: float, drop: float) -> str:
+    src = source_label(listing)
+    old_eur = lv_to_eur(old_price)
+    new_eur = lv_to_eur(new_price)
+    drop_eur = lv_to_eur(drop)
+    profit = estimate_profit(listing["title"], listing["price"])
+
+    if profit and profit["max_profit"] > 0:
+        color = "🟢" if profit["min_profit"] > 50 else "🟡"
+        profit_min_eur = lv_to_eur(profit['min_profit'])
+        profit_max_eur = lv_to_eur(profit['max_profit'])
+        profit_line = (
+            f"\n\n📊 <b>Updated Profit Estimate ({profit['storage']}GB)</b>\n"
+            f"  Buy:    <b>{new_price:.0f} лв ({new_eur})</b>\n"
+            f"  Battery: <b>~{profit['battery_cost']} лв</b>\n"
+            f"  Resell: <b>{profit['min_sell']}–{profit['max_sell']} лв</b>\n"
+            f"  {color} Profit: <b>{profit['min_profit']}–{profit['max_profit']} лв ({profit_min_eur}–{profit_max_eur})</b>"
+        )
+    else:
+        profit_line = ""
+
+    return (
+        f"📉 <b>PRICE DROP!</b>\n{src}\n\n"
+        f"<b>{listing['title']}</b>\n"
+        f"📍 {listing['location']}\n\n"
+        f"  Was:  <s>{old_price:.0f} лв</s> ({old_eur})\n"
+        f"  Now:  <b>{new_price:.0f} лв ({new_eur})</b>\n"
+        f"  Saved: <b>↓ {drop:.0f} лв ({drop_eur})</b>"
+        f"{profit_line}\n\n"
+        f"🔗 <a href='{listing['link']}'>Open listing</a>\n"
+        f"🕐 {datetime.now().strftime('%H:%M:%S')}"
+    )
+
 
 def format_alert(listing: dict, profit: dict | None) -> str:
     battery = is_battery_flip(listing["title"])
@@ -709,6 +770,7 @@ def check_and_notify():
     bazar_listings = fetch_bazar_listings()
     listings = olx_listings + bazar_listings + fb_listings
     new_count = 0
+    drop_count = 0
     skipped = 0
 
     for listing in listings:
@@ -716,27 +778,49 @@ def check_and_notify():
             skipped += 1
             log.debug(f"  Skipped (not iPhone): {listing['title']}")
             continue
-        if listing["id"] not in seen:
-            profit = estimate_profit(listing["title"], listing["price"])
-            flip = "🔋 BATTERY FLIP" if is_battery_flip(listing["title"]) else "📱 iPhone"
-            profit_str = f" | profit {profit['min_profit']}–{profit['max_profit']} лв" if profit else ""
-            log.info(f"  {flip}: {listing['title']} — {listing['price']}{profit_str}")
-            if is_mega_deal(profit):
-                log.info(f"  🚨 MEGA DEAL detected!")
-                # Send twice so phone buzzes twice and it stands out
-                send_telegram(format_mega_deal(listing, profit))
-                time.sleep(2)
-                send_telegram(format_mega_deal(listing, profit))
-            else:
-                send_telegram(format_alert(listing, profit))
-            if profit and profit["max_profit"] > 0:
-                save_best_deal(listing, profit)
-            seen.add(listing["id"])
-            new_count += 1
-            time.sleep(1.5)
+
+        current_price = parse_price_bgn(listing["price"])
+        lid = listing["id"]
+
+        if lid in seen:
+            # ── Price drop check ──────────────────────────────────────
+            stored_price = seen[lid]
+            if (
+                stored_price is not None
+                and current_price is not None
+                and current_price <= stored_price - PRICE_DROP_MIN
+            ):
+                drop = round(stored_price - current_price)
+                log.info(f"  📉 PRICE DROP: {listing['title']} — {stored_price:.0f}→{current_price:.0f} лв (↓{drop} лв)")
+                send_telegram(format_price_drop(listing, stored_price, current_price, drop))
+                seen[lid] = current_price   # track the new lower price
+                drop_count += 1
+                time.sleep(1.5)
+            continue
+
+        # ── New listing ───────────────────────────────────────────────
+        profit = estimate_profit(listing["title"], listing["price"])
+        flip = "🔋 BATTERY FLIP" if is_battery_flip(listing["title"]) else "📱 iPhone"
+        profit_str = f" | profit {profit['min_profit']}–{profit['max_profit']} лв" if profit else ""
+        log.info(f"  {flip}: {listing['title']} — {listing['price']}{profit_str}")
+        if is_mega_deal(profit):
+            log.info(f"  🚨 MEGA DEAL detected!")
+            send_telegram(format_mega_deal(listing, profit))
+            time.sleep(2)
+            send_telegram(format_mega_deal(listing, profit))
+        else:
+            send_telegram(format_alert(listing, profit))
+        if profit and profit["max_profit"] > 0:
+            save_best_deal(listing, profit)
+        seen[lid] = current_price
+        new_count += 1
+        time.sleep(1.5)
 
     save_seen(seen)
-    log.info(f"Done — {len(listings)} total, {skipped} filtered out, {new_count} new alerts sent.")
+    log.info(
+        f"Done — {len(listings)} total, {skipped} filtered out, "
+        f"{new_count} new alerts, {drop_count} price drop alerts sent."
+    )
 
 
 def main():
