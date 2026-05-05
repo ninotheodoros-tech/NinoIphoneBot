@@ -210,20 +210,46 @@ def send_morning_summary():
 # Title must contain one of these to be considered a real iPhone listing
 IPHONE_KEYWORDS = ["iphone", "айфон"]
 
-# Listings containing any of these words are skipped (accessories, not phones)
-EXCLUDE_KEYWORDS = [
-    "airpods", "air pods", "кейс", "case", "калъф", "кабел", "cable",
-    "зарядно", "charger", "слушалки", "стъкло", "протектор", "screen protector",
-    "батерия само", "watch", "ipad", "macbook", "части", "spare parts",
-    "дисплей само", "корпус само"
+# Models BELOW iPhone 12 — skip these entirely (too hard to resell)
+OLD_MODELS = [
+    "iphone 11", "iphone xr", "iphone xs", "iphone x ", "iphone x,",
+    "iphone se", "iphone 8", "iphone 7", "iphone 6", "iphone 5",
+    "iphone 4", "айфон 11", "айфон x", "айфон 8", "айфон 7", "айфон 6",
+    " x ", " xr ", " xs ", " x,", " xr,", " xs,",
+]
+# Models that ARE acceptable (iPhone 12 and above)
+GOOD_MODELS = [
+    "iphone 12", "iphone 13", "iphone 14", "iphone 15", "iphone 16",
+    "айфон 12", "айфон 13", "айфон 14", "айфон 15", "айфон 16",
 ]
 
-# If title contains any of these — flag it as a battery-flip opportunity
+# Listings with ANY of these in the title → skip (accessories, parts, bundles)
+EXCLUDE_KEYWORDS = [
+    # Accessories
+    "airpods", "air pods", "кейс", "case", "калъф", "кабел", "cable",
+    "зарядно", "charger", "слушалки", "earphones", "стъкло", "протектор",
+    "screen protector", "tempered glass", "watch", "ipad", "macbook",
+    "apple tv", "apple watch", "mac mini",
+    # Screens / parts sold alone
+    "дисплей за", "екран за", "display for", "screen for",
+    "дисплей само", "само дисплей", "корпус само", "само корпус",
+    "батерия само", "само батерия", "части за", "spare parts",
+    "резервни части", "ремонт на", "service ", "сервиз",
+    # Multi-phone bundles (hard to value)
+    "лот телефони", "lot телефони", "няколко телефона",
+    # Clearly not a phone
+    "книга", "book", "аксесоар", "accessory", "accessories",
+    "стойка", "holder", "mount", "grip", "pop socket",
+    "power bank", "powerbank", "hub", "adapter", "адаптер",
+    "sim card", "sim карта", "карта памет", "memory card",
+]
+
+# If title contains any of these — flag as battery-flip opportunity
 BATTERY_KEYWORDS = [
     "батерия", "battery", "батер", "зарежда", "не зарежда", "не държи",
     "бърза разредка", "swap", "смяна", "троши", "счупен", "повреден",
     "damage", "broken", "за ремонт", "ремонт", "за части", "spares",
-    "не работи", "проблем"
+    "не работи", "проблем", "дефект",
 ]
 # ───────────────────────────────────────────────────────────────────────────────
 
@@ -283,10 +309,19 @@ def send_telegram(text: str):
 
 def is_iphone(title: str) -> bool:
     t = title.lower()
+    # Must mention iPhone/айфон
     if not any(k in t for k in IPHONE_KEYWORDS):
         return False
+    # Skip accessories and parts
     if any(k in t for k in EXCLUDE_KEYWORDS):
         return False
+    # If we can identify a GOOD model (12+), always allow
+    if any(k in t for k in GOOD_MODELS):
+        return True
+    # If we can identify an OLD model (11 and below), skip it
+    if any(k in t for k in OLD_MODELS):
+        return False
+    # Model unknown (e.g. title just says "iphone") — allow it through
     return True
 
 def is_battery_flip(title: str) -> bool:
@@ -307,19 +342,29 @@ def source_label(listing: dict) -> str:
         return "🔵 Bazar.bg"
     return "🟠 OLX.bg"
 
+BGN_TO_EUR = 1.956  # Fixed rate
+
+def lv_to_eur(lv: float) -> str:
+    return f"{lv / BGN_TO_EUR:.0f}€"
+
 def format_mega_deal(listing: dict, profit: dict) -> str:
+    buy_eur = lv_to_eur(profit['buy'])
+    profit_min_eur = lv_to_eur(profit['min_profit'])
+    profit_max_eur = lv_to_eur(profit['max_profit'])
+    resell_min_eur = lv_to_eur(profit['min_sell'])
+    resell_max_eur = lv_to_eur(profit['max_sell'])
     return (
         f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n"
         f"‼️ <b>MEGA DEAL — BUY NOW!!!</b> ‼️\n"
         f"🚨🔴🚨🔴🚨🔴🚨🔴🚨\n\n"
         f"{source_label(listing)}\n"
         f"🔥 <b>{listing['title']}</b>\n"
-        f"💰 <b>{listing['price']}</b>\n"
+        f"💰 <b>{listing['price']} ({buy_eur})</b>\n"
         f"📍 {listing['location']}\n\n"
-        f"💵 Buy:    <b>{profit['buy']:.0f} лв</b>\n"
+        f"💵 Buy:    <b>{profit['buy']:.0f} лв ({buy_eur})</b>\n"
         f"🔋 Battery: <b>~{profit['battery_cost']} лв</b>\n"
-        f"📈 Resell: <b>{profit['min_sell']}–{profit['max_sell']} лв</b>\n\n"
-        f"🟢🟢 <b>PROFIT: {profit['min_profit']}–{profit['max_profit']} лв</b> 🟢🟢\n\n"
+        f"📈 Resell: <b>{profit['min_sell']}–{profit['max_sell']} лв ({resell_min_eur}–{resell_max_eur})</b>\n\n"
+        f"🟢🟢 <b>PROFIT: {profit['min_profit']}–{profit['max_profit']} лв ({profit_min_eur}–{profit_max_eur})</b> 🟢🟢\n\n"
         f"⚡️ <b>This is a rare one — open it immediately!</b>\n\n"
         f"🔗 <a href='{listing['link']}'>OPEN LISTING NOW</a>\n"
         f"🕐 {datetime.now().strftime('%H:%M:%S')}"
@@ -333,6 +378,7 @@ def format_alert(listing: dict, profit: dict | None) -> str:
     if profit:
         warnings_text = "\n".join(profit["warnings"])
         warn_section = f"\n{warnings_text}" if warnings_text else ""
+        buy_eur = lv_to_eur(profit['buy'])
 
         if any("iCLOUD LOCKED" in w for w in profit["warnings"]):
             profit_section = f"\n{warn_section}\n⛔ <b>SKIP THIS — iCloud locked phones cannot be activated!</b>"
@@ -340,13 +386,17 @@ def format_alert(listing: dict, profit: dict | None) -> str:
             profit_section = f"{warn_section}\n\n🔴 <b>Not worth it</b> — costs more than you can sell for."
         else:
             color = "🟢" if profit["min_profit"] > 50 else "🟡"
+            profit_min_eur = lv_to_eur(profit['min_profit'])
+            profit_max_eur = lv_to_eur(profit['max_profit'])
+            resell_min_eur = lv_to_eur(profit['min_sell'])
+            resell_max_eur = lv_to_eur(profit['max_sell'])
             profit_section = (
                 f"{warn_section}\n\n"
                 f"📊 <b>Profit Estimate ({profit['storage']}GB)</b>\n"
-                f"  Buy:      <b>{profit['buy']:.0f} лв</b>\n"
+                f"  Buy:      <b>{profit['buy']:.0f} лв ({buy_eur})</b>\n"
                 f"  Battery:  <b>~{profit['battery_cost']} лв</b>\n"
-                f"  Resell:   <b>{profit['min_sell']}–{profit['max_sell']} лв</b>\n"
-                f"  {color} Profit: <b>{profit['min_profit']}–{profit['max_profit']} лв</b>"
+                f"  Resell:   <b>{profit['min_sell']}–{profit['max_sell']} лв ({resell_min_eur}–{resell_max_eur})</b>\n"
+                f"  {color} Profit: <b>{profit['min_profit']}–{profit['max_profit']} лв ({profit_min_eur}–{profit_max_eur})</b>"
             )
     else:
         profit_section = ""
