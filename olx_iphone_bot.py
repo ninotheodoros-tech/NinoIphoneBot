@@ -86,14 +86,23 @@ STORAGE_ADJUSTMENTS = {
 }
 
 # Condition issues that reduce what you can resell for
-# Each entry: (keyword, multiplier, warning label)
+# Each entry: (keywords_list, price_multiplier, warning_label)
 CONDITION_FLAGS = [
-    (["icloud", "активационно", "заключен"], 0.0,  "🔴 iCLOUD LOCKED — cannot be used, avoid!"),
-    (["счупен дисплей", "чупен екран", "cracked screen", "пукнат"], 0.70, "⚠️ Cracked screen (-30% resale)"),
-    (["счупено стъкло", "пукнато стъкло"],   0.75, "⚠️ Cracked back glass (-25% resale)"),
-    (["вода", "water", "окислен"],            0.65, "⚠️ Water damage (-35% resale)"),
-    (["face id", "face id не работи"],        0.80, "⚠️ Face ID issue (-20% resale)"),
-    (["за части", "spares only"],             0.40, "⚠️ For parts only (-60% resale)"),
+    # iCloud lock = completely unusable, multiplier 0 means skip
+    (["icloud lock", "icloud заключен", "активационно заключване", "активационно заключен"],
+     0.0, "🔴 iCLOUD LOCKED — cannot be used, avoid!"),
+    # Cracked screen
+    (["счупен дисплей", "счупен екран", "пукнат дисплей", "cracked screen", "cracked display"],
+     0.70, "⚠️ Cracked screen (-30% resale)"),
+    # Cracked back glass only (cheaper to fix)
+    (["счупено стъкло", "пукнато стъкло", "счупен гръб"],
+     0.85, "⚠️ Cracked back glass (-15% resale)"),
+    # Water damage — only specific phrases, NOT "водоустойчив" (waterproof)
+    (["водна повреда", "попаднала вода", "попадна вода", "water damage", "окислен"],
+     0.65, "⚠️ Water damage (-35% resale)"),
+    # Face ID broken — only when explicitly broken, not just mentioned
+    (["face id не работи", "нефункциращ face id", "no face id", "без face id"],
+     0.80, "⚠️ Face ID broken (-20% resale)"),
 ]
 
 def get_model(title: str):
@@ -212,10 +221,10 @@ IPHONE_KEYWORDS = ["iphone", "айфон"]
 
 # Models BELOW iPhone 12 — skip these entirely (too hard to resell)
 OLD_MODELS = [
-    "iphone 11", "iphone xr", "iphone xs", "iphone x ", "iphone x,",
-    "iphone se", "iphone 8", "iphone 7", "iphone 6", "iphone 5",
-    "iphone 4", "айфон 11", "айфон x", "айфон 8", "айфон 7", "айфон 6",
-    " x ", " xr ", " xs ", " x,", " xr,", " xs,",
+    "iphone 11", "iphone xr", "iphone xs max", "iphone xs",
+    "iphone x ", "iphone x,", "iphone x/",
+    "iphone se", "iphone 8", "iphone 7", "iphone 6", "iphone 5", "iphone 4",
+    "айфон 11", "айфон 8", "айфон 7", "айфон 6",
 ]
 # Models that ARE acceptable (iPhone 12 and above)
 GOOD_MODELS = [
@@ -234,7 +243,7 @@ EXCLUDE_KEYWORDS = [
     "дисплей за", "екран за", "display for", "screen for",
     "дисплей само", "само дисплей", "корпус само", "само корпус",
     "батерия само", "само батерия", "части за", "за части", "spare parts",
-    "резервни части", "ремонт на", "service ", "сервиз",
+    "резервни части", "ремонт на", "сервиз",
     # Multi-phone bundles (hard to value)
     "лот телефони", "lot телефони", "няколко телефона",
     # Clearly not a phone
