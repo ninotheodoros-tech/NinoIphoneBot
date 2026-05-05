@@ -38,7 +38,7 @@ PRICE_DROP_MIN = 5
 # ── Profit Estimator ───────────────────────────────────────────────────────────
 import re
 
-BATTERY_COST = 40   # лв — average battery replacement cost in Bulgaria
+BATTERY_COST = 64   # лв — genuine-chip battery (~$35) with 1yr warranty, no "Important Battery Message"
 BEST_DEALS_FILE = "best_deals.json"
 
 # Base resale price (лв) for 128GB working iPhone in good condition on OLX.bg
