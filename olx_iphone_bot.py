@@ -11,6 +11,8 @@ import json
 import time
 import os
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
 logging.basicConfig(
@@ -907,10 +909,36 @@ def check_and_notify():
     )
 
 
+# ── Keepalive HTTP server ───────────────────────────────────────────────────────
+# Runs in a background thread so Replit treats this as a web app and never
+# puts it to sleep — even when you close the browser tab.
+
+CHECK_INTERVAL = 20   # seconds between scrape runs (20s = near-instant alerts)
+
+class _KeepAliveHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"iPhone Flipper Bot running OK")
+    def log_message(self, *args):
+        pass   # silence HTTP access logs
+
+def _start_keepalive_server():
+    port = int(os.environ.get("PORT", 8080))
+    try:
+        server = HTTPServer(("0.0.0.0", port), _KeepAliveHandler)
+        log.info(f"Keepalive server listening on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        log.warning(f"Keepalive server failed to start: {e}")
+
+
 def main():
     log.info("=" * 55)
     log.info("  OLX.bg iPhone Flipper Bot — Starting up")
     log.info(f"  Price range : {MIN_PRICE}–{MAX_PRICE} лв (~$60–$140)")
+    log.info(f"  Check interval: every {CHECK_INTERVAL}s")
     log.info(f"  Search URL  : {SEARCH_URL}")
     log.info("=" * 55)
 
@@ -922,15 +950,20 @@ def main():
         send_morning_summary()
         return
 
+    # Start keepalive server in background (keeps Replit awake 24/7)
+    if not run_once:
+        t = threading.Thread(target=_start_keepalive_server, daemon=True)
+        t.start()
+
     while True:
-        log.info(f"Checking OLX.bg at {datetime.now().strftime('%H:%M:%S')} ...")
+        log.info(f"Checking at {datetime.now().strftime('%H:%M:%S')} ...")
         try:
             check_and_notify()
         except Exception as e:
             log.error(f"Unexpected error during check: {e}")
         if run_once:
             break
-        time.sleep(60)
+        time.sleep(CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
