@@ -925,13 +925,16 @@ class _KeepAliveHandler(BaseHTTPRequestHandler):
         pass   # silence HTTP access logs
 
 def _start_keepalive_server():
-    port = int(os.environ.get("PORT", 8080))
-    try:
-        server = HTTPServer(("0.0.0.0", port), _KeepAliveHandler)
-        log.info(f"Keepalive server listening on port {port}")
-        server.serve_forever()
-    except Exception as e:
-        log.warning(f"Keepalive server failed to start: {e}")
+    # Try a range of ports to avoid collision with API server (8080) and mockup (8081)
+    for port in [8082, 8083, 8084, 8085]:
+        try:
+            server = HTTPServer(("0.0.0.0", port), _KeepAliveHandler)
+            log.info(f"Keepalive server listening on port {port}")
+            server.serve_forever()
+            return
+        except OSError:
+            continue
+    log.warning("Keepalive server: no free port found — bot will still run normally.")
 
 
 def main():
