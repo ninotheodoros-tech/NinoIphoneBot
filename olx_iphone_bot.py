@@ -141,6 +141,16 @@ def estimate_profit(title: str, listing_price_text: str):
 
     base_min, base_max = RESALE_PRICES[model]
 
+    # Sanity check: if buy price is less than 30% of minimum resale,
+    # it's almost certainly a scam listing, parts-only, or wrong currency.
+    # Don't treat it as a profit deal — return None so it won't fire MEGA DEAL.
+    if buy_price < base_min * 0.30:
+        log.warning(
+            f"  ⚠️ SUSPICIOUS PRICE: {listing_price_text!r} for {model} "
+            f"(min resale {base_min} лв) — skipping profit estimate."
+        )
+        return None
+
     # Adjust for storage
     storage = get_storage(title)
     storage_adj = STORAGE_ADJUSTMENTS.get(storage, 0.0)
@@ -223,15 +233,26 @@ def send_morning_summary():
 IPHONE_KEYWORDS = ["iphone", "айфон"]
 
 # Models BELOW iPhone 12 — skip these entirely (too hard to resell)
+# Include no-space variants (e.g. "Iphone11") to catch sloppy titles
 OLD_MODELS = [
-    "iphone 11", "iphone xr", "iphone xs max", "iphone xs",
+    "iphone 11", "iphone11",
+    "iphone xr", "iphonexr",
+    "iphone xs max", "iphone xs", "iphonexs",
     "iphone x ", "iphone x,", "iphone x/",
-    "iphone se", "iphone 8", "iphone 7", "iphone 6", "iphone 5", "iphone 4",
+    "iphone se", "iphonese",
+    "iphone 8", "iphone8",
+    "iphone 7", "iphone7",
+    "iphone 6", "iphone6",
+    "iphone 5", "iphone 4",
     "айфон 11", "айфон 8", "айфон 7", "айфон 6",
 ]
 # Models that ARE acceptable (iPhone 12 and above)
 GOOD_MODELS = [
-    "iphone 12", "iphone 13", "iphone 14", "iphone 15", "iphone 16",
+    "iphone 12", "iphone12",
+    "iphone 13", "iphone13",
+    "iphone 14", "iphone14",
+    "iphone 15", "iphone15",
+    "iphone 16", "iphone16",
     "айфон 12", "айфон 13", "айфон 14", "айфон 15", "айфон 16",
 ]
 
@@ -247,6 +268,11 @@ EXCLUDE_KEYWORDS = [
     "дисплей само", "само дисплей", "корпус само", "само корпус",
     "батерия само", "само батерия", "части за", "за части", "spare parts",
     "резервни части", "ремонт на", "за ремонт", "сервиз",
+    # Shop BUY ads — these are phone shops advertising "we buy iPhones", not sell listings
+    "изкупуваме", "купувам iphone", "купуваме", "търся iphone",
+    "търсим iphone", "изкупувам", "вземам iphone",
+    # Parts in title (e.g. "pro max-части", "13-части")
+    "-части", "/части",
     # Multi-phone bundles (hard to value)
     "лот телефони", "lot телефони", "няколко телефона",
     # Clearly not a phone
@@ -303,23 +329,81 @@ def parse_price_bgn(price_text: str) -> float | None:
     return val
 
 
+# ── GitHub seen-list sync ───────────────────────────────────────────────────────
+# Both Replit and GitHub Actions share ONE seen_listings.json stored in the repo.
+# This prevents duplicate alerts when both runners are active.
+
+_GH_TOKEN = os.environ.get("GITHUB_PAT") or os.environ.get("GITHUB_TOKEN", "")
+_GH_REPO  = "ninotheodoros-tech/NinoIphoneBot"
+_GH_API   = f"https://api.github.com/repos/{_GH_REPO}/contents/{SEEN_FILE}"
+_GH_HEADS = {
+    "Authorization": f"token {_GH_TOKEN}",
+    "Accept": "application/vnd.github.v3+json",
+}
+
+def _gh_pull_seen() -> dict | None:
+    """Download seen_listings.json from GitHub. Returns None on failure."""
+    if not _GH_TOKEN:
+        return None
+    try:
+        import base64
+        r = requests.get(_GH_API, headers=_GH_HEADS, timeout=10)
+        if r.status_code == 404:
+            return {}   # file doesn't exist yet — start fresh
+        if not r.ok:
+            return None
+        data = json.loads(base64.b64decode(r.json()["content"]).decode())
+        if isinstance(data, list):
+            return {id_: None for id_ in data}
+        return data
+    except Exception as e:
+        log.warning(f"GitHub pull seen failed: {e}")
+        return None
+
+def _gh_push_seen(seen: dict):
+    """Upload seen_listings.json to GitHub (atomic SHA update)."""
+    if not _GH_TOKEN:
+        return
+    try:
+        import base64
+        content = base64.b64encode(json.dumps(seen, indent=2).encode()).decode()
+        # Get current SHA (required for update)
+        r = requests.get(_GH_API, headers=_GH_HEADS, timeout=10)
+        payload: dict = {"message": "chore: update seen listings", "content": content}
+        if r.ok:
+            payload["sha"] = r.json()["sha"]
+        requests.put(_GH_API, headers=_GH_HEADS, json=payload, timeout=15)
+    except Exception as e:
+        log.warning(f"GitHub push seen failed: {e}")
+
+
 def load_seen() -> dict:
     """Returns {listing_id: last_seen_price_bgn}.
+    Tries GitHub first (shared between all runners), falls back to local file.
     Automatically migrates old list-of-IDs format to the new dict format.
     """
+    remote = _gh_pull_seen()
+    if remote is not None:
+        log.info(f"Seen list loaded from GitHub ({len(remote)} IDs).")
+        # Also keep local copy in sync
+        with open(SEEN_FILE, "w") as f:
+            json.dump(remote, f, indent=2)
+        return remote
+    # Fallback: local file
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
             data = json.load(f)
         if isinstance(data, list):
-            # Old format: list of ID strings → migrate, price unknown
             return {id_: None for id_ in data}
         return data
     return {}
 
 
 def save_seen(seen: dict):
+    """Save locally AND push to GitHub so all runners stay in sync."""
     with open(SEEN_FILE, "w") as f:
         json.dump(seen, f, indent=2)
+    _gh_push_seen(seen)
 
 
 # ── Telegram ───────────────────────────────────────────────────────────────────
