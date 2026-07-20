@@ -120,8 +120,8 @@ EXCLUDE_KEYWORDS = [
     # Shop "we buy iPhones" ads
     "изкупуваме", "купувам iphone", "купуваме", "търся iphone",
     "търсим iphone", "изкупувам", "вземам iphone",
-    # Parts variants in title (e.g. "iPhone 13-части")
-    "-части", "/части",
+    # Parts variants in title (e.g. "iPhone 13-части", "на части")
+    "-части", "/части", "на части",
     # Bundles
     "лот телефони", "lot телефони", "няколко телефона",
     # Other junk
