@@ -546,21 +546,37 @@ def main():
     log.info(f"  OLX URL   : {SEARCH_URL}")
     log.info("=" * 60)
 
-    run_once = os.environ.get("GITHUB_ACTIONS") == "true"
+    on_github = os.environ.get("GITHUB_ACTIONS") == "true"
+    loop_seconds = int(os.environ.get("LOOP_FOR_SECONDS", "0"))
 
-    if not run_once:
+    if not on_github:
+        # Replit: start keepalive server and loop forever
         t = threading.Thread(target=_start_keepalive_server, daemon=True)
         t.start()
-
-    while True:
-        log.info(f"Checking at {datetime.now().strftime('%H:%M:%S')} ...")
-        try:
-            check_and_notify()
-        except Exception as e:
-            log.error(f"Unexpected error: {e}")
-        if run_once:
-            break
-        time.sleep(CHECK_INTERVAL)
+        while True:
+            log.info(f"Checking at {datetime.now().strftime('%H:%M:%S')} ...")
+            try:
+                check_and_notify()
+            except Exception as e:
+                log.error(f"Unexpected error: {e}")
+            time.sleep(CHECK_INTERVAL)
+    else:
+        # GitHub Actions: loop for LOOP_FOR_SECONDS then exit cleanly
+        # This way each 5-minute cron run checks every 10s for ~4.5 minutes
+        deadline = time.time() + (loop_seconds if loop_seconds > 0 else 0)
+        while True:
+            log.info(f"Checking at {datetime.now().strftime('%H:%M:%S')} ...")
+            try:
+                check_and_notify()
+            except Exception as e:
+                log.error(f"Unexpected error: {e}")
+            if loop_seconds == 0:
+                break   # run-once mode (no LOOP_FOR_SECONDS set)
+            remaining = deadline - time.time()
+            if remaining <= CHECK_INTERVAL:
+                log.info(f"Loop complete — exiting for next scheduled run.")
+                break
+            time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
     main()
