@@ -124,6 +124,11 @@ EXCLUDE_KEYWORDS = [
     "-части", "/части", "на части",
     # Bundles
     "лот телефони", "lot телефони", "няколко телефона",
+    # Cases / covers / back glass
+    "гръб", "cover", "силикон", "silicone", "bumper", "folio",
+    "leather case", "wallet case", "flip case",
+    # Boxes / packaging only
+    "кутия", "кутийка", "само кутия", "кутия само",
     # Other junk
     "книга", "book", "аксесоар", "accessory", "accessories",
     "стойка", "holder", "mount", "grip", "pop socket",
