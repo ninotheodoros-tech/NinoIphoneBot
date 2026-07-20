@@ -108,6 +108,10 @@ CONDITION_FLAGS = [
     # Face ID broken — only when explicitly broken, not just mentioned
     (["face id не работи", "нефункциращ face id", "no face id", "без face id"],
      0.80, "⚠️ Face ID broken (-20% resale)"),
+    # Carrier locked — harder to sell, not unusable (can be unlocked or sold to right buyer)
+    (["заключен към оператор", "locked to carrier", "carrier locked", "network locked",
+      "заключен оператор", "оператор заключен"],
+     0.75, "⚠️ Carrier locked (-25% resale — harder to sell)"),
 ]
 
 def get_model(title: str):
@@ -246,7 +250,8 @@ OLD_MODELS = [
     "iphone 7", "iphone7",
     "iphone 6", "iphone6",
     "iphone 5", "iphone 4",
-    "айфон 11", "айфон 8", "айфон 7", "айфон 6",
+    "айфон 11", "айфон xr", "айфон xs", "айфон x", "айфон se",
+    "айфон 8", "айфон 7", "айфон 6",
 ]
 # Models that ARE acceptable (iPhone 12 and above)
 GOOD_MODELS = [
@@ -418,15 +423,20 @@ def send_telegram(text: str):
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        if not r.ok:
-            log.error(f"Telegram error {r.status_code}: {r.text}")
-        r.raise_for_status()
-    except requests.HTTPError:
-        pass  # already logged above
-    except Exception as e:
-        log.error(f"Telegram send failed: {e}")
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json=payload, timeout=20)
+            if not r.ok:
+                log.error(f"Telegram error {r.status_code}: {r.text}")
+            r.raise_for_status()
+            return  # success
+        except requests.HTTPError:
+            return  # already logged, don't retry HTTP errors
+        except Exception as e:
+            log.warning(f"Telegram attempt {attempt+1}/3 failed: {e}")
+            if attempt < 2:
+                time.sleep(3)
+    log.error("Telegram: all 3 attempts failed — message dropped.")
 
 
 def is_iphone(title: str) -> bool:
